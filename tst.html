@@ -1,0 +1,507 @@
+<?php
+session_start();
+require 'db.php';
+
+// Check if user is logged in and is a chef
+if (!isset($_SESSION['user_id'])) {
+    header("Location: login.php");
+    exit();
+}
+
+// Verify user has a chef profile
+$user_id = $_SESSION['user_id'];
+$chef_check = mysqli_query($conn, "SELECT ChefID FROM chef WHERE user_id = $user_id");
+if (mysqli_num_rows($chef_check) == 0) {
+    $_SESSION['error'] = "You need to create a chef profile first";
+    header("Location: chef_profile.php");
+    exit();
+}
+$chef_row = mysqli_fetch_assoc($chef_check);
+$chef_id = $chef_row['ChefID'];
+
+// Fetch dropdown options from database
+$goals = [];
+$dietary_prefs = [];
+$cuisine_types = [];
+$meal_types = [];
+$units = ['g', 'kg', 'ml', 'l', 'tsp', 'tbsp', 'cup', 'pinch', 'piece']; // Common units
+
+$goal_query = "SELECT * FROM goal";
+$dietary_query = "SELECT * FROM dietary_preferences";
+$cuisine_query = "SELECT * FROM cuisine_type";
+$meal_query = "SELECT * FROM meal_types";
+
+$goal_result = mysqli_query($conn, $goal_query) or die(mysqli_error($conn));
+$dietary_result = mysqli_query($conn, $dietary_query) or die(mysqli_error($conn));
+$cuisine_result = mysqli_query($conn, $cuisine_query) or die(mysqli_error($conn));
+$meal_result = mysqli_query($conn, $meal_query) or die(mysqli_error($conn));
+
+if ($goal_result && mysqli_num_rows($goal_result) > 0) {
+    while ($row = mysqli_fetch_assoc($goal_result)) {
+        $goals[] = $row;
+    }
+}
+
+if ($dietary_result && mysqli_num_rows($dietary_result) > 0) {
+    while ($row = mysqli_fetch_assoc($dietary_result)) {
+        $dietary_prefs[] = $row;
+    }
+}
+
+if ($cuisine_result && mysqli_num_rows($cuisine_result) > 0) {
+    while ($row = mysqli_fetch_assoc($cuisine_result)) {
+        $cuisine_types[] = $row;
+    }
+}
+
+if ($meal_result && mysqli_num_rows($meal_result) > 0) {
+    while ($row = mysqli_fetch_assoc($meal_result)) {
+        $meal_types[] = $row;
+    }
+}
+
+$message = "";
+
+if ($_SERVER["REQUEST_METHOD"] == "POST") {
+    // Sanitize and validate input
+    $title = mysqli_real_escape_string($conn, $_POST['title']);
+    $cooking_time = intval($_POST['cooking_time']);
+    $difficulty = mysqli_real_escape_string($conn, $_POST['difficulty']);
+    $goal_id = intval($_POST['goal']);
+    $cuisine_type_id = intval($_POST['cuisine_type']);
+    $meal_type_id = intval($_POST['meal_type']);
+    $video = mysqli_real_escape_string($conn, $_POST['video']);
+    $details = mysqli_real_escape_string($conn, $_POST['details']);
+    $expiry_date = mysqli_real_escape_string($conn, $_POST['expiry_date']);
+    $created_at = date('Y-m-d H:i:s');
+    
+    // Handle main image upload
+    $filename = $_FILES["image"]["name"];
+    $tempname = $_FILES["image"]["tmp_name"];
+    $folder = "image/" . $filename;
+    
+    // Validate image upload
+    if (!move_uploaded_file($tempname, $folder)) {
+        $message = "<div class='alert alert-danger'>Failed to upload image!</div>";
+    } else {
+        // Start transaction
+        mysqli_begin_transaction($conn);
+        
+        try {
+            // Insert recipe into database
+            $insert_recipe = "INSERT INTO recipe (
+                title, cooking_time, difficulty_lvl, image, created_at, 
+                video, details, expiry_date, chefs_id, cuisine_typeID, meal_typesID
+            ) VALUES (
+                '$title', $cooking_time, '$difficulty', '$filename', '$created_at', 
+                '$video', '$details', " . ($expiry_date ? "'$expiry_date'" : "NULL") . ", 
+                $chef_id, $cuisine_type_id, $meal_type_id
+            )";
+            
+            if (!mysqli_query($conn, $insert_recipe)) {
+                throw new Exception("Error inserting recipe: " . mysqli_error($conn));
+            }
+            
+            $recipe_id = mysqli_insert_id($conn);
+            
+            // Insert ingredients with units and images
+            foreach ($_POST['ingredient_name'] as $key => $ingredient_name) {
+                $ingredient_name = trim(mysqli_real_escape_string($conn, $ingredient_name));
+                $quantity = floatval($_POST['ingredient_quantity'][$key]);
+                $unit = mysqli_real_escape_string($conn, $_POST['ingredient_unit'][$key]);
+                
+                if (!empty($ingredient_name)) {
+                    // Handle ingredient image upload
+                    $ingredient_image = "";
+                    if (!empty($_FILES['ingredient_image']['name'][$key])) {
+                        $ingredient_filename = $_FILES['ingredient_image']['name'][$key];
+                        $ingredient_tempname = $_FILES['ingredient_image']['tmp_name'][$key];
+                        $ingredient_folder = "image/ingredients/" . $ingredient_filename;
+                        
+                        if (move_uploaded_file($ingredient_tempname, $ingredient_folder)) {
+                            $ingredient_image = $ingredient_filename;
+                        }
+                    }
+                    
+                    // Check if ingredient exists
+                    $ingredient_check = mysqli_query($conn, "SELECT IngredientsID FROM ingredients WHERE name = '$ingredient_name'");
+                    
+                    if (mysqli_num_rows($ingredient_check) > 0) {
+                        // Ingredient exists, get its ID
+                        $ingredient_row = mysqli_fetch_assoc($ingredient_check);
+                        $ingredient_id = $ingredient_row['IngredientsID'];
+                        
+                        // Update ingredient image if provided
+                        if (!empty($ingredient_image)) {
+                            $update_image = "UPDATE ingredients SET image = '$ingredient_image' WHERE IngredientsID = $ingredient_id";
+                            mysqli_query($conn, $update_image);
+                        }
+                    } else {
+                        // Insert new ingredient if it doesn't exist
+                        $ingredient_query = "INSERT INTO ingredients (name, units, image) VALUES ('$ingredient_name', '$unit', " . 
+                            (!empty($ingredient_image) ? "'$ingredient_image'" : "NULL") . ")";
+                        if (!mysqli_query($conn, $ingredient_query)) {
+                            throw new Exception("Error inserting ingredient: " . mysqli_error($conn));
+                        }
+                        $ingredient_id = mysqli_insert_id($conn);
+                    }
+                    
+                    // Insert into used table
+                    $insert_ingredient = "INSERT INTO used (ingredient_id, recipe_id, quantity) 
+                        VALUES ($ingredient_id, $recipe_id, $quantity)";
+                    if (!mysqli_query($conn, $insert_ingredient)) {
+                        throw new Exception("Error inserting ingredient usage: " . mysqli_error($conn));
+                    }
+                }
+            }
+            
+            // Insert instructions and instruction images
+            foreach ($_POST['instructions'] as $index => $step) {
+                if (!empty(trim($step))) {
+                    $step = mysqli_real_escape_string($conn, $step);
+                    $step_number = $index + 1;
+                    
+                    // Insert instruction
+                    $insert_instruction = "INSERT INTO instructions (cooking_step, step_nbr, details, recipe_id) 
+                        VALUES ('$step', $step_number, '', $recipe_id)";
+                    if (!mysqli_query($conn, $insert_instruction)) {
+                        throw new Exception("Error inserting instruction: " . mysqli_error($conn));
+                    }
+                    
+                    // Handle instruction image upload if exists
+                    if (!empty($_FILES['instruction_image']['name'][$index])) {
+                        $instruction_filename = $_FILES['instruction_image']['name'][$index];
+                        $instruction_tempname = $_FILES['instruction_image']['tmp_name'][$index];
+                        $instruction_folder = "image/instructions/" . $instruction_filename;
+                        
+                        if (move_uploaded_file($instruction_tempname, $instruction_folder)) {
+                            $insert_instruction_image = "INSERT INTO images (image, step, recipe_id) 
+                                VALUES ('$instruction_filename', $step_number, $recipe_id)";
+                            if (!mysqli_query($conn, $insert_instruction_image)) {
+                                throw new Exception("Error inserting instruction image: " . mysqli_error($conn));
+                            }
+                        }
+                    }
+                }
+            }
+            
+            // Insert dietary preferences
+            if (isset($_POST['dietary_preferences'])) {
+                foreach ($_POST['dietary_preferences'] as $pref_id) {
+                    $pref_id = intval($pref_id);
+                    $insert_preference = "INSERT INTO dietaryRecipe (recipe_id, dietary_preferences_id) 
+                        VALUES ($recipe_id, $pref_id)";
+                    if (!mysqli_query($conn, $insert_preference)) {
+                        throw new Exception("Error inserting dietary preference: " . mysqli_error($conn));
+                    }
+                }
+            }
+            
+            // Insert goal
+            if ($goal_id > 0) {
+                $insert_goal = "INSERT INTO recipe_goal (recipe_id, goal_id) 
+                    VALUES ($recipe_id, $goal_id)";
+                if (!mysqli_query($conn, $insert_goal)) {
+                    throw new Exception("Error inserting goal: " . mysqli_error($conn));
+                }
+            }
+            
+            // Commit transaction
+            mysqli_commit($conn);
+            $_SESSION['success_message'] = "Recipe added successfully!";
+            header("Location: chef.php");
+            exit();
+        } catch (Exception $e) {
+            // Rollback transaction on error
+            mysqli_rollback($conn);
+            $message = "<div class='alert alert-danger'>" . $e->getMessage() . "</div>";
+            
+            // Delete uploaded file if transaction failed
+            if (file_exists($folder)) {
+                unlink($folder);
+            }
+        }
+    }
+}
+?>
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Dish Dash - Add Recipe</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0-alpha1/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;600&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
+    <style>
+        body {
+            font-family: 'Poppins', sans-serif;
+            background: url('https://source.unsplash.com/1600x900/?cooking,food') no-repeat center center/cover;
+            padding-top: 70px;
+        }
+
+        .navbar {
+            background-color: #ffcc00;
+            padding: 10px 20px;
+            position: fixed;
+            top: 0;
+            width: 100%;
+            z-index: 1000;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+        }
+
+        .ingredient-row {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 15px;
+            align-items: center;
+        }
+
+        .ingredient-input {
+            flex: 1;
+        }
+
+        .ingredient-image-container {
+            width: 80px;
+            height: 80px;
+            border: 2px dashed #ddd;
+            border-radius: 8px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .ingredient-image-preview {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            display: none;
+        }
+
+        .ingredient-image-container i {
+            font-size: 24px;
+            color: #aaa;
+        }
+
+        /* Add more styles as needed */
+    </style>
+</head>
+<body>
+    <!-- Navbar -->
+    <nav class="navbar navbar-expand-lg">
+        <div class="container">
+            <a class="navbar-brand" href="chef.php">
+                <img src="Recipe Book Logo.jpeg" alt="Logo" style="width: 40px; height: 40px; border-radius: 50%;">
+                Dish Dash
+            </a>
+        </div>
+    </nav>
+
+    <!-- Hero Image Section -->
+    <div class="hero">
+        🍽️ Add Your Delicious Recipe and Share the Joy of Cooking! 🍽️
+    </div>
+
+    <!-- Add Recipe Form -->
+    <div class="container">
+        <div class="row justify-content-center">
+            <div class="col-md-8">
+                <div class="card">
+                    <h3 class="text-center mb-4">Add a New Recipe</h3>
+                    <?php if (!empty($message)): ?>
+                        <div class="alert alert-danger"><?php echo $message; ?></div>
+                    <?php endif; ?>
+                    <form method="POST" action="chefAddRecipe.php" enctype="multipart/form-data">
+                        <!-- Title Field -->
+                        <div class="mb-3">
+                            <label for="title">Title</label>
+                            <div class="input-group">
+                                <span class="input-group-text"><i class="fas fa-utensils"></i></span>
+                                <input type="text" class="form-control" id="title" name="title" placeholder="Enter recipe title" required>
+                            </div>
+                        </div>
+
+                        <!-- Ingredients Section with Units and Images -->
+                        <div class="mb-3">
+                            <label>Ingredients</label>
+                            <div id="ingredients-container">
+                                <!-- Ingredient 1 -->
+                                <div class="ingredient-row">
+                                    <div class="ingredient-number">1.</div>
+                                    <div class="ingredient-input">
+                                        <input type="text" class="form-control" name="ingredient_name[]" placeholder="Ingredient name" required>
+                                    </div>
+                                    <div class="ingredient-input">
+                                        <input type="number" step="0.01" class="form-control" name="ingredient_quantity[]" placeholder="0.00" required>
+                                    </div>
+                                    <div class="ingredient-input">
+                                        <select class="form-control" name="ingredient_unit[]" required>
+                                            <?php foreach ($units as $unit): ?>
+                                                <option value="<?php echo $unit; ?>"><?php echo $unit; ?></option>
+                                            <?php endforeach; ?>
+                                        </select>
+                                    </div>
+                                    <div class="ingredient-image-container" onclick="document.getElementById('ingredient-image-1').click()">
+                                        <i class="fas fa-camera"></i>
+                                        <img id="ingredient-image-preview-1" class="ingredient-image-preview">
+                                        <input type="file" id="ingredient-image-1" name="ingredient_image[]" accept="image/*" style="display: none;" onchange="previewIngredientImage(event, 1)">
+                                    </div>
+                                </div>
+                                
+                                <!-- Ingredient 2 -->
+                                <div class="ingredient-row">
+                                    <div class="ingredient-number">2.</div>
+                                    <div class="ingredient-input">
+                                        <input type="text" class="form-control" name="ingredient_name[]" placeholder="Ingredient name" required>
+                                    </div>
+                                    <div class="ingredient-input">
+                                        <input type="number" step="0.01" class="form-control" name="ingredient_quantity[]" placeholder="0.00" required>
+                                    </div>
+                                    <div class="ingredient-input">
+                                        <select class="form-control" name="ingredient_unit[]" required>
+                                            <?php foreach ($units as $unit): ?>
+                                                <option value="<?php echo $unit; ?>"><?php echo $unit; ?></option>
+                                            <?php endforeach; ?>
+                                        </select>
+                                    </div>
+                                    <div class="ingredient-image-container" onclick="document.getElementById('ingredient-image-2').click()">
+                                        <i class="fas fa-camera"></i>
+                                        <img id="ingredient-image-preview-2" class="ingredient-image-preview">
+                                        <input type="file" id="ingredient-image-2" name="ingredient_image[]" accept="image/*" style="display: none;" onchange="previewIngredientImage(event, 2)">
+                                    </div>
+                                </div>
+                            </div>
+                            <button type="button" class="btn btn-secondary mt-2" onclick="addIngredient()">
+                                <i class="fas fa-plus"></i> Add Another Ingredient
+                            </button>
+                        </div>
+
+                        <!-- Rest of your form fields -->
+                        <!-- ... -->
+
+                        <button type="submit" class="btn btn-primary">Add Recipe</button>
+                    </form>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Ingredient image preview function
+        function previewIngredientImage(event, index) {
+            const preview = document.getElementById(`ingredient-image-preview-${index}`);
+            const container = preview.parentElement;
+            
+            if (event.target.files && event.target.files[0]) {
+                preview.src = URL.createObjectURL(event.target.files[0]);
+                preview.style.display = 'block';
+                container.querySelector('i').style.display = 'none';
+            }
+        }
+
+        // Function to add more ingredients dynamically
+        let ingredientCount = 2;
+        function addIngredient() {
+            ingredientCount++;
+            const container = document.getElementById("ingredients-container");
+            
+            const row = document.createElement("div");
+            row.className = "ingredient-row";
+            
+            // Number
+            const numberDiv = document.createElement("div");
+            numberDiv.className = "ingredient-number";
+            numberDiv.textContent = ingredientCount + ".";
+            row.appendChild(numberDiv);
+            
+            // Name
+            const nameInputDiv = document.createElement("div");
+            nameInputDiv.className = "ingredient-input";
+            const nameInput = document.createElement("input");
+            nameInput.type = "text";
+            nameInput.className = "form-control";
+            nameInput.name = "ingredient_name[]";
+            nameInput.placeholder = "Ingredient name";
+            nameInput.required = true;
+            nameInputDiv.appendChild(nameInput);
+            row.appendChild(nameInputDiv);
+            
+            // Quantity
+            const quantityInputDiv = document.createElement("div");
+            quantityInputDiv.className = "ingredient-input";
+            const quantityInput = document.createElement("input");
+            quantityInput.type = "number";
+            quantityInput.step = "0.01";
+            quantityInput.className = "form-control";
+            quantityInput.name = "ingredient_quantity[]";
+            quantityInput.placeholder = "0.00";
+            quantityInput.required = true;
+            quantityInputDiv.appendChild(quantityInput);
+            row.appendChild(quantityInputDiv);
+            
+            // Unit
+            const unitInputDiv = document.createElement("div");
+            unitInputDiv.className = "ingredient-input";
+            const unitSelect = document.createElement("select");
+            unitSelect.className = "form-control";
+            unitSelect.name = "ingredient_unit[]";
+            unitSelect.required = true;
+            
+            // Add unit options
+            const units = <?php echo json_encode($units); ?>;
+            units.forEach(unit => {
+                const option = document.createElement("option");
+                option.value = unit;
+                option.textContent = unit;
+                unitSelect.appendChild(option);
+            });
+            
+            unitInputDiv.appendChild(unitSelect);
+            row.appendChild(unitInputDiv);
+            
+            // Image
+            const imageContainer = document.createElement("div");
+            imageContainer.className = "ingredient-image-container";
+            imageContainer.onclick = function() {
+                document.getElementById(`ingredient-image-${ingredientCount}`).click();
+            };
+            
+            const cameraIcon = document.createElement("i");
+            cameraIcon.className = "fas fa-camera";
+            imageContainer.appendChild(cameraIcon);
+            
+            const imagePreview = document.createElement("img");
+            imagePreview.id = `ingredient-image-preview-${ingredientCount}`;
+            imagePreview.className = "ingredient-image-preview";
+            imageContainer.appendChild(imagePreview);
+            
+            const fileInput = document.createElement("input");
+            fileInput.type = "file";
+            fileInput.id = `ingredient-image-${ingredientCount}`;
+            fileInput.name = "ingredient_image[]";
+            fileInput.accept = "image/*";
+            fileInput.style.display = "none";
+            fileInput.onchange = function(event) {
+                previewIngredientImage(event, ingredientCount);
+            };
+            imageContainer.appendChild(fileInput);
+            
+            row.appendChild(imageContainer);
+            container.appendChild(row);
+        }
+
+        // Form submission loading state
+        document.querySelector('form').addEventListener('submit', function() {
+            const submitBtn = this.querySelector('button[type="submit"]');
+            submitBtn.disabled = true;
+            submitBtn.innerHTML = '<span class="spinner-border spinner-border-sm"></span> Adding Recipe...';
+        });
+    </script>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0-alpha1/dist/js/bootstrap.bundle.min.js"></script>
+</body>
+</html>

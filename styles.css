@@ -1,0 +1,101 @@
+/* Import Google Font */
+@import url('https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;600&display=swap');
+
+body {
+    font-family: 'Poppins', sans-serif;
+    background: url('WhatsApp Image 2025-03-07 at 3.50.21 PM.jpeg') no-repeat center center fixed;
+    background-size:contain;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    height: 100vh;
+    margin: 0;
+}
+
+.login-container {
+    text-align: center;
+    background: rgba(255, 255, 255, 0.9);  /* Keeps the widget white with slight transparency */
+    padding: 40px 30px;
+    border-radius: 20px;
+    box-shadow: 0px 8px 32px rgba(0, 0, 0, 0.3);
+    width: 400px;
+    transition: 0.3s;
+}
+
+.login-container:hover {
+    transform: scale(1.02);
+}
+
+h1 {
+    font-weight: 600;
+    margin-bottom: 20px;
+    font-size: 28px;
+    color: #eb9515;
+    letter-spacing: 1px;
+}
+
+.logo img {
+    width: 150px;
+    height: 150px;         /* Ensures the image is a perfect square */
+    border-radius: 50%;    /* Makes the image circular */
+    border: 3px solid #fff; /* Optional: Adds a white border */
+    box-shadow: 0 0 15px rgba(0, 0, 0, 0.3); /* Optional: Soft shadow for depth */
+    margin-bottom: 25px;
+    object-fit: cover;     /* Ensures the image fills the circle properly */
+}
+
+
+form {
+    display: flex;
+    flex-direction: column;
+}
+
+input {
+    width: calc(100% - 20px);
+    padding: 12px;
+    margin: 10px 0;
+    border: 2px solid rgba(255, 255, 255, 0.3);
+    border-radius: 30px;
+    text-align: center;
+    font-size: 16px;
+    background: rgba(255, 255, 255, 0.2);
+    color: #fff;
+    transition: 0.3s;
+    outline: none;
+}
+
+input:focus {
+    border-color: #ffcc00;
+    background: rgba(255, 255, 255, 0.3);
+}
+
+.no-acc {
+    font-size: 14px;
+    color: #f5de79;
+    text-decoration: none;
+    margin-bottom: 15px;
+    transition: 0.3s;
+}
+
+.no-acc:hover {
+    color: #ffcc00;
+}
+
+.login-btn {
+    background: linear-gradient(90deg, #ffcc00, #ff9900);
+    border: none;
+    padding: 12px;
+    border-radius: 30px;
+    font-size: 18px;
+    font-weight: bold;
+    cursor: pointer;
+    color: #fff;
+    transition: 0.3s;
+    margin-top: 10px;
+    box-shadow: 0 4px 15px rgba(0, 0, 0, 0.2);
+}
+
+.login-btn:hover {
+    background: linear-gradient(90deg, #ff9900, #ffcc00);
+    transform: translateY(-2px);
+}
